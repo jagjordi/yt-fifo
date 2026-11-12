@@ -44,6 +44,10 @@ type Config struct {
 	ReresolveAfter time.Duration
 	// Volume is the initial output gain, 0..1 (linear). Zero means full volume.
 	Volume float64
+	// MaxVolume is a fixed scaling, 0..1, applied on top of Volume: it is what
+	// "100 %" on the volume control amounts to. Use it to tame a source that
+	// is much louder than the others on the same snapserver. Zero means 1.
+	MaxVolume float64
 }
 
 // Errors returned by control methods.
@@ -93,6 +97,9 @@ func New(cfg Config) *Player {
 	}
 	if cfg.Volume <= 0 || cfg.Volume > 1 || math.IsNaN(cfg.Volume) {
 		cfg.Volume = 1
+	}
+	if cfg.MaxVolume <= 0 || cfg.MaxVolume > 1 || math.IsNaN(cfg.MaxVolume) {
+		cfg.MaxVolume = 1
 	}
 	p := &Player{cfg: cfg, subs: map[chan Status]struct{}{}}
 	p.cond = sync.NewCond(&p.mu)
@@ -531,7 +538,7 @@ func (p *Player) pump(r io.Reader) (int64, error) {
 		if n > 0 {
 			end := carry + n
 			whole := end &^ 1
-			applyGain(buf[:whole], p.Volume())
+			applyGain(buf[:whole], p.Volume()*p.cfg.MaxVolume)
 			if _, werr := p.cfg.Sink.Write(buf[:whole]); werr != nil {
 				return total, werr
 			}

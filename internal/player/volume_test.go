@@ -66,6 +66,28 @@ func TestPumpAppliesGainAcrossOddReads(t *testing.T) {
 	}
 }
 
+func TestMaxVolumeScalesWithoutChangingVolume(t *testing.T) {
+	var out bytes.Buffer
+	p := New(Config{Rate: 48000, Channels: 2, Sink: &out, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), MaxVolume: 0.5})
+	if p.Status().Volume != 1 {
+		t.Errorf("volume reported %v, want 1: the scaling must stay invisible", p.Status().Volume)
+	}
+	if _, err := p.pump(bytes.NewReader(samples(1000, -1000))); err != nil {
+		t.Fatal(err)
+	}
+	if want := samples(500, -500); !bytes.Equal(out.Bytes(), want) {
+		t.Errorf("max volume 0.5: got %v want %v", out.Bytes(), want)
+	}
+	out.Reset()
+	p.SetVolume(0.5)
+	if _, err := p.pump(bytes.NewReader(samples(1000, -1000))); err != nil {
+		t.Fatal(err)
+	}
+	if want := samples(250, -250); !bytes.Equal(out.Bytes(), want) {
+		t.Errorf("max volume 0.5 x volume 0.5: got %v want %v", out.Bytes(), want)
+	}
+}
+
 func TestVolumeClampAndStatus(t *testing.T) {
 	p := New(Config{Rate: 48000, Channels: 2, Sink: io.Discard, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if v := p.Status().Volume; v != 1 {

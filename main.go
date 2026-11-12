@@ -128,6 +128,7 @@ func serve(args []string) error {
 	rate := fs.Int("rate", envInt(48000, "YT_FIFO_RATE", "AUDIO_RATE"), "sample rate in Hz (env YT_FIFO_RATE, or AUDIO_RATE)")
 	channels := fs.Int("channels", envInt(2, "YT_FIFO_CHANNELS", "AUDIO_CHANNELS"), "channel count (env YT_FIFO_CHANNELS, or AUDIO_CHANNELS)")
 	volume := fs.Float64("volume", envFloat(1, "YT_FIFO_VOLUME"), "initial output volume, 0..1, applied in software; changeable at runtime via POST /volume (env YT_FIFO_VOLUME)")
+	maxVolume := fs.Float64("max-volume", envFloat(1, "YT_FIFO_MAX_VOLUME"), "fixed output scaling, 0..1, on top of the volume: what volume 1.0 amounts to (env YT_FIFO_MAX_VOLUME)")
 	ffmpeg := fs.String("ffmpeg", envOr("ffmpeg", "FFMPEG"), "ffmpeg binary (env FFMPEG)")
 	ytdlp := fs.String("yt-dlp", envOr("yt-dlp", "YT_DLP"), "yt-dlp binary (env YT_DLP)")
 	ytdlpArgs := fs.String("yt-dlp-args", envOr("", "YT_DLP_ARGS"), "extra yt-dlp arguments, space separated (env YT_DLP_ARGS)")
@@ -141,6 +142,9 @@ func serve(args []string) error {
 	}
 	if *volume <= 0 || *volume > 1 {
 		return errors.New("volume must be between 0 (exclusive) and 1")
+	}
+	if *maxVolume <= 0 || *maxVolume > 1 {
+		return errors.New("max-volume must be between 0 (exclusive) and 1")
 	}
 	log := newLogger(*logLevel)
 
@@ -160,13 +164,14 @@ func serve(args []string) error {
 		Log:       log,
 	}
 	p := player.New(player.Config{
-		Rate:     *rate,
-		Channels: *channels,
-		FFmpeg:   *ffmpeg,
-		Resolver: resolver,
-		Sink:     out,
-		Log:      log,
-		Volume:   *volume,
+		Rate:      *rate,
+		Channels:  *channels,
+		FFmpeg:    *ffmpeg,
+		Resolver:  resolver,
+		Sink:      out,
+		Log:       log,
+		Volume:    *volume,
+		MaxVolume: *maxVolume,
 	})
 
 	ln, err := net.Listen("tcp", *listen)
@@ -184,7 +189,7 @@ func serve(args []string) error {
 		}
 	}()
 	log.Info("yt-fifo started", "version", version, "listen", ln.Addr().String(), "output", *output,
-		"format", fmt.Sprintf("s16le %d Hz %d ch", *rate, *channels), "volume", *volume)
+		"format", fmt.Sprintf("s16le %d Hz %d ch", *rate, *channels), "volume", *volume, "max_volume", *maxVolume)
 
 	p.Run(ctx) // returns when ctx is cancelled
 

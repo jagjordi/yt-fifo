@@ -8,7 +8,7 @@ services:
     build:
       context: .
       args:
-        VERSION: "0.3.0"
+        VERSION: "0.3.1"
     container_name: yt-fifo
     ports:
       - "8888:8080"
@@ -20,5 +20,7 @@ services:
       #   YT_FIFO_OUTPUT: /pipe/ytaudio   (+ volumes: - /tmp:/pipe)
       # Initial output volume 0..1; adjustable at runtime (web UI, POST /volume, Home Assistant).
       YT_FIFO_VOLUME: "1"
+      # Fixed scaling on top of the volume (what volume 1.0 amounts to).
+      YT_FIFO_MAX_VOLUME: "1"
       TZ: Europe/Stockholm
     restart: unless-stopped

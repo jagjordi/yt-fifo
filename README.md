@@ -137,6 +137,7 @@ from the original Python version.
 | `-rate` | `YT_FIFO_RATE`, `AUDIO_RATE` | `48000` | Output sample rate |
 | `-channels` | `YT_FIFO_CHANNELS`, `AUDIO_CHANNELS` | `2` | Output channels |
 | `-volume` | `YT_FIFO_VOLUME` | `1` | Initial output volume, 0..1 (linear gain). Change it at runtime with `POST /volume`, the web UI slider, Snapcast's `Stream.SetProperty` or Home Assistant |
+| `-max-volume` | `YT_FIFO_MAX_VOLUME` | `1` | Fixed scaling on top of the volume, 0..1: what volume `1.0` amounts to. Use it when YouTube is much louder than the other snapserver sources, so the volume control keeps its full range |
 | `-yt-dlp-args` | `YT_DLP_ARGS` | | Extra yt-dlp arguments, e.g. `--cookies /config/cookies.txt` |
 | `-yt-dlp`, `-ffmpeg` | `YT_DLP`, `FFMPEG` | names on `$PATH` | Binaries |
 | `-log-level` | `YT_FIFO_LOG_LEVEL` | `info` | `debug` logs every yt-dlp call and HTTP request |
