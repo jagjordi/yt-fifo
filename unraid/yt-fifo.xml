@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>yt-fifo</Name>
+  <Repository>ghcr.io/jagjordi/yt-fifo</Repository>
+  <Registry>https://github.com/jagjordi/yt-fifo/pkgs/container/yt-fifo</Registry>
+  <GitHub>https://github.com/jagjordi/yt-fifo</GitHub>
+  <Project>https://github.com/jagjordi/yt-fifo</Project>
+  <Support>https://github.com/jagjordi/yt-fifo/issues</Support>
+  <ReadMe>https://github.com/jagjordi/yt-fifo/blob/master/README.md</ReadMe>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Category>MediaApp:Music HomeAutomation:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <Icon>https://raw.githubusercontent.com/jagjordi/yt-fifo/master/logo.png</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/jagjordi/yt-fifo/master/unraid/yt-fifo.xml</TemplateURL>
+  <Overview>
+    Queue YouTube videos and stream their audio into Snapcast as raw PCM.
+    HTTP API and a one-page web UI for queueing, skipping, pausing and seeking.
+
+    This standalone container writes to a named pipe (or a snapserver tcp://
+    source). If you run the home-audio container you do not need it: yt-fifo
+    is built into that image and launched by snapserver directly, with track
+    metadata and play/pause/next wired into Snapweb and Home Assistant.
+  </Overview>
+  <Config Name="API port" Target="8080" Default="8888" Mode="tcp" Description="HTTP API and web UI. POST {&quot;url&quot;: ...} to /queue." Type="Port" Display="always" Required="true" Mask="false">8888</Config>
+  <Config Name="Pipe directory" Target="/pipe" Default="/tmp" Mode="rw" Description="Host directory shared with snapserver; the FIFO is created inside it. Must be the same host path snapserver's pipe:// source reads from (home-audio mounts it as /fifos)." Type="Path" Display="always" Required="false" Mask="false">/tmp</Config>
+  <Config Name="Output" Target="YT_FIFO_OUTPUT" Default="/pipe/ytaudio" Mode="" Description="Where PCM goes: a FIFO path under /pipe, or tcp://host:port for a snapserver tcp:// source in server mode." Type="Variable" Display="always" Required="true" Mask="false">/pipe/ytaudio</Config>
+  <Config Name="Sample rate" Target="YT_FIFO_RATE" Default="48000" Mode="" Description="Must match the sampleformat of the snapserver source." Type="Variable" Display="advanced" Required="false" Mask="false">48000</Config>
+  <Config Name="Channels" Target="YT_FIFO_CHANNELS" Default="2" Mode="" Description="Must match the sampleformat of the snapserver source." Type="Variable" Display="advanced" Required="false" Mask="false">2</Config>
+  <Config Name="Volume" Target="YT_FIFO_VOLUME" Default="1" Mode="" Description="Initial output volume 0..1 (software gain, before the snapclients' own volume). Adjustable at runtime from the web UI, POST /volume or Home Assistant." Type="Variable" Display="always" Required="false" Mask="false">1</Config>
+  <Config Name="Extra yt-dlp arguments" Target="YT_DLP_ARGS" Default="" Mode="" Description="Appended to every yt-dlp call, e.g. --cookies /pipe/cookies.txt for age-restricted videos." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="TZ" Target="TZ" Default="Europe/Stockholm" Mode="" Description="Timezone for log timestamps." Type="Variable" Display="advanced" Required="false" Mask="false">Europe/Stockholm</Config>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+</Container>

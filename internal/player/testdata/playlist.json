@@ -1,0 +1,5 @@
+{"_type":"playlist","id":"PLx","title":"Mix","entries":[
+ {"_type":"url","ie_key":"Youtube","id":"aaaaaaaaaaa","url":"https://www.youtube.com/watch?v=aaaaaaaaaaa","title":"First","duration":120,"uploader":"Up1","thumbnails":[{"url":"https://i.ytimg.com/vi/aaaaaaaaaaa/hqdefault.jpg"}]},
+ null,
+ {"_type":"url","ie_key":"Youtube","id":"bbbbbbbbbbb","url":"https://www.youtube.com/watch?v=bbbbbbbbbbb","title":"Second","duration":null,"channel":"Chan2"}
+]}

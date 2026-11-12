@@ -1,0 +1,24 @@
+# Standalone yt-fifo next to an existing snapserver.
+#
+# If you run ghcr.io/jagjordi/home-audio you do not need this: yt-fifo is
+# built into that image and launched by snapserver (see its README).
+services:
+  yt-fifo:
+    image: ghcr.io/jagjordi/yt-fifo:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      args:
+        VERSION: "0.3.0"
+    container_name: yt-fifo
+    ports:
+      - "8888:8080"
+    environment:
+      # Feed a snapserver tcp:// source. In snapserver.conf:
+      #   source = tcp://0.0.0.0:4953?name=YouTube&mode=server&sampleformat=48000:16:2
+      YT_FIFO_OUTPUT: tcp://${SNAPSERVER_HOST:-192.168.1.181}:4953
+      # Or share a directory with snapserver and write a named pipe instead:
+      #   YT_FIFO_OUTPUT: /pipe/ytaudio   (+ volumes: - /tmp:/pipe)
+      # Initial output volume 0..1; adjustable at runtime (web UI, POST /volume, Home Assistant).
+      YT_FIFO_VOLUME: "1"
+      TZ: Europe/Stockholm
+    restart: unless-stopped

@@ -1,0 +1,28 @@
+# Helper scripts for the dashboard buttons: they read the URL typed into
+# input_text.youtube and hand it to the yt-fifo media_player. Add to scripts.yaml
+# (or create them in the UI with the same content).
+yt_fifo_play_now:
+  alias: "Home audio: play now"
+  icon: mdi:play-speed
+  mode: single
+  sequence:
+    - action: media_player.play_media
+      target:
+        entity_id: media_player.home_audio_youtube
+      data:
+        media_content_type: music
+        media_content_id: "{{ states('input_text.youtube') }}"
+        enqueue: play
+
+yt_fifo_queue:
+  alias: "Home audio: queue"
+  icon: mdi:playlist-plus
+  mode: single
+  sequence:
+    - action: media_player.play_media
+      target:
+        entity_id: media_player.home_audio_youtube
+      data:
+        media_content_type: music
+        media_content_id: "{{ states('input_text.youtube') }}"
+        enqueue: add

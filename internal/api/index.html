@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>yt-fifo</title>
+<style>
+  :root { color-scheme: light dark; --fg: #222; --bg: #fff; --muted: #777; --line: #ddd; --accent: #c00; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #eee; --bg: #161616; --muted: #999; --line: #333; --accent: #f33; } }
+  body { margin: 0 auto; max-width: 720px; padding: 16px; font: 15px/1.45 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+  h1 { font-size: 20px; margin: 0 0 16px; }
+  form { display: flex; gap: 8px; margin-bottom: 16px; }
+  input[type=url] { flex: 1; padding: 8px 10px; font: inherit; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; }
+  button { padding: 8px 12px; font: inherit; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+  button:hover { border-color: var(--fg); }
+  label { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+  .now { display: flex; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 12px; min-height: 90px; align-items: center; }
+  .now img { width: 128px; height: 72px; object-fit: cover; border-radius: 4px; background: var(--line); }
+  .now .t { flex: 1; min-width: 0; }
+  .now .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .now .sub { color: var(--muted); font-size: 13px; }
+  .bar { height: 4px; background: var(--line); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+  .bar div { height: 100%; width: 0; background: var(--accent); }
+  .ctl { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  ol { padding-left: 0; margin: 0; list-style: none; }
+  li { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); align-items: center; }
+  li img { width: 64px; height: 36px; object-fit: cover; border-radius: 3px; background: var(--line); }
+  li .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  li .d { color: var(--muted); font-size: 13px; }
+  li button { padding: 2px 8px; }
+  .empty { color: var(--muted); padding: 12px 0; }
+  #err { color: var(--accent); font-size: 13px; min-height: 1.4em; }
+</style>
+</head>
+<body>
+<h1>yt-fifo</h1>
+<form id="f">
+  <input type="url" id="url" placeholder="https://www.youtube.com/watch?v=…" required autofocus>
+  <label><input type="checkbox" id="pl"> playlist</label>
+  <button type="submit">Queue</button>
+</form>
+<div id="err"></div>
+<div class="now">
+  <img id="thumb" alt="">
+  <div class="t">
+    <div class="title" id="title">Nothing playing</div>
+    <div class="sub" id="sub"></div>
+    <div class="bar"><div id="prog"></div></div>
+  </div>
+</div>
+<div class="ctl">
+  <button data-a="toggle" id="pp">Play / pause</button>
+  <button data-a="skip">Next</button>
+  <button data-a="stop">Stop</button>
+  <button data-a="seek" data-off="-30">−30 s</button>
+  <button data-a="seek" data-off="30">+30 s</button>
+  <button data-a="clear">Clear queue</button>
+  <label title="Software volume, before the snapclients' own">Volume <input type="range" id="vol" min="0" max="100" step="1"> <span id="volv"></span></label>
+</div>
+<ol id="q"></ol>
+<script>
+const $ = s => document.querySelector(s);
+let st = null, posAt = 0;
+const fmt = s => { s = Math.max(0, Math.round(s || 0)); const m = Math.floor(s / 60), h = Math.floor(m / 60);
+  return (h ? h + ':' + String(m % 60).padStart(2, '0') : m) + ':' + String(s % 60).padStart(2, '0'); };
+async function call(method, path, body) {
+  const r = await fetch(path, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function render() {
+  const np = st && st.now_playing;
+  $('#thumb').src = np && np.thumbnail || '';
+  $('#thumb').style.visibility = np && np.thumbnail ? 'visible' : 'hidden';
+  $('#title').textContent = np ? (np.title || np.url) : 'Nothing playing';
+  $('#sub').textContent = np ? [np.uploader, st.state, np.live ? 'live' : (fmt(np.position) + ' / ' + fmt(np.duration))].filter(Boolean).join(' · ') : (st ? st.state : '');
+  $('#prog').style.width = np && np.duration ? (100 * np.position / np.duration) + '%' : '0';
+  $('#pp').textContent = st && st.state === 'playing' ? 'Pause' : 'Play';
+  if (st && !volDrag) { vol.value = Math.round(st.volume * 100); $('#volv').textContent = vol.value + '%'; }
+  const q = $('#q'); q.innerHTML = '';
+  if (!st || !st.queue.length) { q.innerHTML = '<li class="empty">Queue is empty</li>'; return; }
+  for (const t of st.queue) {
+    const li = document.createElement('li');
+    const img = document.createElement('img'); img.src = t.thumbnail || ''; img.alt = '';
+    const title = document.createElement('div'); title.className = 't'; title.textContent = t.title || t.url;
+    const d = document.createElement('div'); d.className = 'd'; d.textContent = t.duration ? fmt(t.duration) : '';
+    const rm = document.createElement('button'); rm.textContent = '✕'; rm.title = 'Remove';
+    rm.onclick = () => call('DELETE', '/queue/' + encodeURIComponent(t.id)).catch(showErr);
+    li.append(img, title, d, rm); q.append(li);
+  }
+}
+function showErr(e) { $('#err').textContent = e.message || String(e); setTimeout(() => $('#err').textContent = '', 6000); }
+$('#f').onsubmit = async e => {
+  e.preventDefault();
+  try { await call('POST', '/queue', { url: $('#url').value, playlist: $('#pl').checked }); $('#url').value = ''; } catch (err) { showErr(err); }
+};
+document.querySelectorAll('.ctl button').forEach(b => b.onclick = () => {
+  const a = b.dataset.a;
+  const p = a === 'seek' ? call('POST', '/seek', { offset: Number(b.dataset.off) }) : call('POST', '/' + a);
+  p.catch(showErr);
+});
+const vol = $('#vol');
+let volDrag = false;
+vol.oninput = () => { volDrag = true; $('#volv').textContent = vol.value + '%'; };
+vol.onchange = () => { volDrag = false; call('POST', '/volume', { volume: Number(vol.value) / 100 }).catch(showErr); };
+function connect() {
+  const es = new EventSource('/events');
+  es.addEventListener('status', e => { st = JSON.parse(e.data); posAt = Date.now(); render(); });
+  es.onerror = () => { es.close(); setTimeout(connect, 2000); };
+}
+connect();
+setInterval(() => { if (st && st.state === 'playing' && st.now_playing) {
+  st.now_playing.position += (Date.now() - posAt) / 1000; posAt = Date.now(); render(); } }, 1000);
+</script>
+</body>
+</html>

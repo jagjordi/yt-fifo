@@ -1,0 +1,6 @@
+# Add to configuration.yaml. The component lives in custom_components/yt_fifo.
+media_player:
+  - platform: yt_fifo
+    host: 192.168.1.181
+    port: 8888
+    name: Home audio YouTube      # -> media_player.home_audio_youtube

@@ -1,0 +1,496 @@
+From 3e862e339e32b457915f3af9c1f2e6694cad477f Mon Sep 17 00:00:00 2001
+From: Jordi Altayo <jordiag@kth.se>
+Date: Thu, 12 Nov 2026 12:22:03 +0100
+Subject: [PATCH] Add "Play on home audio" and "Queue on home audio" for
+ yt-fifo
+
+yt-fifo (https://github.com/jagjordi/yt-fifo) plays the audio of a video on
+a Snapcast multi-room setup. Once its server URL is set in the video and
+audio settings, the stream long-press menu and the Cast to TV picker get two
+entries: "Play on home audio" interrupts what is playing there (POST /queue
+with play_now), "Queue on home audio" appends to its queue. The request is
+sent asynchronously and a toast reports the resolved title or the server's
+error message. Playing from the Cast button pauses local playback, like a
+cast does.
+
+The Cast picker's fixed rows (TubeBeam, home audio) are now a list of
+labelled actions instead of two hardcoded TubeBeam positions, and
+FCastManager.hasTargets() decides whether the Cast button is shown.
+
+yt-fifo is a plain-http LAN service, so the application declares
+usesCleartextTraffic; Android 9+ blocks cleartext otherwise.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ app/src/main/AndroidManifest.xml              |   1 +
+ .../org/schabi/newpipe/cast/FCastManager.kt   |  62 +++++--
+ .../fragments/detail/VideoDetailFragment.java |   5 +-
+ .../info_list/dialog/InfoItemDialog.java      |  16 ++
+ .../dialog/StreamDialogDefaultEntry.java      |  11 ++
+ .../external_communication/YtFifoUtils.java   | 172 ++++++++++++++++++
+ app/src/main/res/values/donottranslate.xml    |   1 +
+ app/src/main/res/values/settings_keys.xml     |   1 +
+ app/src/main/res/values/strings.xml           |   7 +
+ app/src/main/res/xml/video_audio_settings.xml |   9 +
+ 10 files changed, 267 insertions(+), 18 deletions(-)
+ create mode 100644 app/src/main/java/org/schabi/newpipe/util/external_communication/YtFifoUtils.java
+
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 8dd8a93d9..57a96f13a 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -58,6 +58,7 @@
+         android:roundIcon="@mipmap/ic_launcher"
+         android:resizeableActivity="true"
+         android:theme="@style/OpeningTheme"
++        android:usesCleartextTraffic="true"
+         tools:ignore="AllowBackup">
+ 
+         <meta-data
+diff --git a/app/src/main/java/org/schabi/newpipe/cast/FCastManager.kt b/app/src/main/java/org/schabi/newpipe/cast/FCastManager.kt
+index 2cd926431..72562d399 100644
+--- a/app/src/main/java/org/schabi/newpipe/cast/FCastManager.kt
++++ b/app/src/main/java/org/schabi/newpipe/cast/FCastManager.kt
+@@ -37,6 +37,7 @@ import org.schabi.newpipe.util.ListHelper
+ import org.schabi.newpipe.util.StreamTypeUtil
+ import org.schabi.newpipe.util.external_communication.ShareUtils
+ import org.schabi.newpipe.util.external_communication.TubeBeamUtils
++import org.schabi.newpipe.util.external_communication.YtFifoUtils
+ 
+ /** Application-scoped discovery and playback handoff for FCast-compatible TV receivers. */
+ object FCastManager {
+@@ -68,9 +69,17 @@ object FCastManager {
+     @JvmStatic
+     fun canSendToTv(context: Context, info: StreamInfo): Boolean = TubeBeamUtils.shouldShowSendToTv(context, info.serviceId)
+ 
++    /** Whether a yt-fifo server is configured, so the stream's audio can be sent to the home audio system. */
++    @JvmStatic
++    fun canSendToHomeAudio(context: Context): Boolean = YtFifoUtils.shouldShowHomeAudio(context)
++
++    /** Whether the Cast button has anything to offer for this stream. */
++    @JvmStatic
++    fun hasTargets(context: Context, info: StreamInfo): Boolean = canCast(context, info) || canSendToTv(context, info) || canSendToHomeAudio(context)
++
+     @JvmStatic
+     fun showDevicePicker(context: Context, info: StreamInfo, localPlayer: Player?) {
+-        if (!isAvailable() && !canSendToTv(context, info)) return
++        if (!hasTargets(context, info)) return
+         val connectedDevice = activeDevice
+         val connectedName = activeDeviceName
+         if (connectedDevice?.isReady() == true && connectedName != null) {
+@@ -82,17 +91,27 @@ object FCastManager {
+ 
+     private fun showAvailableDevices(context: Context, info: StreamInfo, localPlayer: Player?) {
+         val source = if (isAvailable()) selectSource(context, info) else null
+-        // TubeBeam rows are fixed at the top of the list; discovered receivers follow them.
+-        val tubeBeamLabels = if (canSendToTv(context, info)) {
++        // Fixed rows (TubeBeam, home audio) sit at the top of the list; discovered receivers follow them.
++        val fixedRows = mutableListOf<FixedRow>()
++        if (canSendToTv(context, info)) {
+             val appName = context.getString(R.string.tubebeam_app_name)
+-            listOf(
+-                "$appName · ${context.getString(R.string.send_to_tv_title)}",
+-                "$appName · ${context.getString(R.string.queue_on_tv_title)}"
+-            )
+-        } else {
+-            emptyList()
++            fixedRows += FixedRow("$appName · ${context.getString(R.string.send_to_tv_title)}") {
++                sendToTubeBeam(context, info, localPlayer, enqueue = false)
++            }
++            fixedRows += FixedRow("$appName · ${context.getString(R.string.queue_on_tv_title)}") {
++                sendToTubeBeam(context, info, localPlayer, enqueue = true)
++            }
+         }
+-        if (source == null && tubeBeamLabels.isEmpty()) {
++        if (canSendToHomeAudio(context)) {
++            val name = context.getString(R.string.home_audio_name)
++            fixedRows += FixedRow("$name · ${context.getString(R.string.play_on_home_audio_title)}") {
++                sendToHomeAudio(context, info, localPlayer, playNow = true)
++            }
++            fixedRows += FixedRow("$name · ${context.getString(R.string.queue_on_home_audio_title)}") {
++                sendToHomeAudio(context, info, localPlayer, playNow = false)
++            }
++        }
++        if (source == null && fixedRows.isEmpty()) {
+             Toast.makeText(context, R.string.cast_no_compatible_stream, Toast.LENGTH_LONG).show()
+             return
+         }
+@@ -105,10 +124,10 @@ object FCastManager {
+         val dialog = MaterialAlertDialogBuilder(context)
+             .setTitle(R.string.cast_to_tv)
+             .setAdapter(adapter) { _, position ->
+-                if (position < tubeBeamLabels.size) {
+-                    sendToTubeBeam(context, info, localPlayer, enqueue = position == 1)
++                if (position < fixedRows.size) {
++                    fixedRows[position].action()
+                 } else if (source != null) {
+-                    availableDevices.getOrNull(position - tubeBeamLabels.size)?.let {
++                    availableDevices.getOrNull(position - fixedRows.size)?.let {
+                         connect(context, it, source, createPlaybackHandoff(info, localPlayer))
+                     }
+                 }
+@@ -123,7 +142,7 @@ object FCastManager {
+             availableDevices.clear()
+             if (source != null) availableDevices.addAll(currentDevices.filter(::isResolved))
+             labels.clear()
+-            labels.addAll(tubeBeamLabels)
++            labels.addAll(fixedRows.map { it.label })
+             labels.addAll(availableDevices.map(::deviceLabel))
+             adapter.notifyDataSetChanged()
+             dialog.setTitle(
+@@ -362,6 +381,18 @@ object FCastManager {
+         }
+     }
+ 
++    /**
++     * Sends the stream to the yt-fifo server, which plays its audio on the home audio system. When
++     * the stream is being played locally and is played now (not queued), local playback is paused
++     * like for a cast.
++     */
++    private fun sendToHomeAudio(context: Context, info: StreamInfo, localPlayer: Player?, playNow: Boolean) {
++        YtFifoUtils.sendToHomeAudio(context, info.url, playNow)
++        if (playNow && localPlayer != null && isSameStream(localPlayer, info) && localPlayer.isPlaying) {
++            localPlayer.pause()
++        }
++    }
++
+     private fun createPlaybackHandoff(info: StreamInfo, player: Player?): PlaybackHandoff? {
+         if (player == null || !isSameStream(player, info)) return null
+ 
+@@ -442,4 +473,7 @@ object FCastManager {
+     }
+ 
+     private data class CastSource(val url: String, val contentType: String)
++
++    /** A picker entry that is not a discovered receiver. */
++    private class FixedRow(val label: String, val action: () -> Unit)
+ }
+diff --git a/app/src/main/java/org/schabi/newpipe/fragments/detail/VideoDetailFragment.java b/app/src/main/java/org/schabi/newpipe/fragments/detail/VideoDetailFragment.java
+index f6eeb5ee5..7791d490b 100644
+--- a/app/src/main/java/org/schabi/newpipe/fragments/detail/VideoDetailFragment.java
++++ b/app/src/main/java/org/schabi/newpipe/fragments/detail/VideoDetailFragment.java
+@@ -2646,10 +2646,7 @@ public final class VideoDetailFragment
+         binding.detailControlsShare.setVisibility(View.VISIBLE);
+         binding.detailControlsOpenInBrowser.setVisibility(View.VISIBLE);
+         binding.detailControlsCast.setVisibility(
+-                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+-                        && FCastManager.canCast(requireContext(), info))
+-                        || FCastManager.canSendToTv(requireContext(), info)
+-                        ? View.VISIBLE : View.GONE);
++                FCastManager.hasTargets(requireContext(), info) ? View.VISIBLE : View.GONE);
+         binding.detailControlsPlayWithKodi.setVisibility(
+                 KoreUtils.shouldShowPlayWithKodi(requireContext(), info.getServiceId())
+                         ? View.VISIBLE : View.GONE);
+diff --git a/app/src/main/java/org/schabi/newpipe/info_list/dialog/InfoItemDialog.java b/app/src/main/java/org/schabi/newpipe/info_list/dialog/InfoItemDialog.java
+index c7eca7947..4b95eab98 100644
+--- a/app/src/main/java/org/schabi/newpipe/info_list/dialog/InfoItemDialog.java
++++ b/app/src/main/java/org/schabi/newpipe/info_list/dialog/InfoItemDialog.java
+@@ -36,6 +36,7 @@ import org.schabi.newpipe.util.StreamTypeUtil;
+ import org.schabi.newpipe.util.ThemeHelper;
+ import org.schabi.newpipe.util.external_communication.KoreUtils;
+ import org.schabi.newpipe.util.external_communication.TubeBeamUtils;
++import org.schabi.newpipe.util.external_communication.YtFifoUtils;
+ 
+ import java.util.ArrayList;
+ import java.util.List;
+@@ -364,6 +365,20 @@ public final class InfoItemDialog {
+             return this;
+         }
+ 
++        /**
++         * Adds the {@link StreamDialogDefaultEntry#PLAY_ON_HOME_AUDIO} and
++         * {@link StreamDialogDefaultEntry#QUEUE_ON_HOME_AUDIO} entries if a yt-fifo server is
++         * configured.
++         * @return the current {@link Builder} instance
++         */
++        public Builder addHomeAudioEntriesIfNeeded() {
++            if (YtFifoUtils.shouldShowHomeAudio(context)) {
++                addEntry(StreamDialogDefaultEntry.PLAY_ON_HOME_AUDIO);
++                addEntry(StreamDialogDefaultEntry.QUEUE_ON_HOME_AUDIO);
++            }
++            return this;
++        }
++
+         /**
+          * Add the entries which are usually at the top of the action list.
+          * <br/>
+@@ -401,6 +416,7 @@ public final class InfoItemDialog {
+             );
+             addPlayWithKodiEntryIfNeeded();
+             addSendToTvEntriesIfNeeded();
++            addHomeAudioEntriesIfNeeded();
+             addLearningContentEntryIfNeeded();
+             if (infoItem.getServiceId() >= 0
+                     && KidsMode.isSubscriptionAllowed(context, infoItem.getServiceId())) {
+diff --git a/app/src/main/java/org/schabi/newpipe/info_list/dialog/StreamDialogDefaultEntry.java b/app/src/main/java/org/schabi/newpipe/info_list/dialog/StreamDialogDefaultEntry.java
+index 0bdc04ac3..1b31a5909 100644
+--- a/app/src/main/java/org/schabi/newpipe/info_list/dialog/StreamDialogDefaultEntry.java
++++ b/app/src/main/java/org/schabi/newpipe/info_list/dialog/StreamDialogDefaultEntry.java
+@@ -30,6 +30,7 @@ import org.schabi.newpipe.util.NavigationHelper;
+ import org.schabi.newpipe.util.external_communication.KoreUtils;
+ import org.schabi.newpipe.util.external_communication.ShareUtils;
+ import org.schabi.newpipe.util.external_communication.TubeBeamUtils;
++import org.schabi.newpipe.util.external_communication.YtFifoUtils;
+ import org.schabi.newpipe.util.image.ExtractorImageCompat;
+ 
+ import java.util.Collections;
+@@ -148,6 +149,16 @@ public enum StreamDialogDefaultEntry {
+     QUEUE_ON_TV(R.string.queue_on_tv_title, (fragment, item) ->
+             TubeBeamUtils.sendToTv(fragment.requireContext(), item.getUrl(), true)),
+ 
++    /**
++     * Plays the stream's audio on the home audio system through a yt-fifo server, see
++     * {@link YtFifoUtils#sendToHomeAudio(android.content.Context, String, boolean)}.
++     */
++    PLAY_ON_HOME_AUDIO(R.string.play_on_home_audio_title, (fragment, item) ->
++            YtFifoUtils.sendToHomeAudio(fragment.requireContext(), item.getUrl(), true)),
++
++    QUEUE_ON_HOME_AUDIO(R.string.queue_on_home_audio_title, (fragment, item) ->
++            YtFifoUtils.sendToHomeAudio(fragment.requireContext(), item.getUrl(), false)),
++
+     COPY_TITLE(R.string.copy_video_title, (fragment, item) ->
+             ShareUtils.copyToClipboard(fragment.requireContext(), item.getName())),
+ 
+diff --git a/app/src/main/java/org/schabi/newpipe/util/external_communication/YtFifoUtils.java b/app/src/main/java/org/schabi/newpipe/util/external_communication/YtFifoUtils.java
+new file mode 100644
+index 000000000..1169fddef
+--- /dev/null
++++ b/app/src/main/java/org/schabi/newpipe/util/external_communication/YtFifoUtils.java
+@@ -0,0 +1,172 @@
++package org.schabi.newpipe.util.external_communication;
++
++import android.content.Context;
++import android.os.Handler;
++import android.os.Looper;
++import android.util.Log;
++import android.widget.Toast;
++
++import androidx.annotation.NonNull;
++import androidx.annotation.Nullable;
++import androidx.preference.PreferenceManager;
++
++import org.json.JSONException;
++import org.json.JSONObject;
++import org.schabi.newpipe.R;
++
++import java.io.IOException;
++import java.util.concurrent.TimeUnit;
++
++import okhttp3.Call;
++import okhttp3.Callback;
++import okhttp3.MediaType;
++import okhttp3.OkHttpClient;
++import okhttp3.Request;
++import okhttp3.RequestBody;
++import okhttp3.Response;
++
++/**
++ * Util class for yt-fifo, a self-hosted server that plays the audio of a video on a Snapcast
++ * multi-room setup ("home audio"). The server is reached over its small HTTP API; the only thing
++ * to configure is its base URL, in the video and audio settings.
++ * @see <a href="https://github.com/jagjordi/yt-fifo">yt-fifo on GitHub</a>
++ */
++public final class YtFifoUtils {
++    private static final String TAG = "YtFifoUtils";
++    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
++    private static final Handler MAIN = new Handler(Looper.getMainLooper());
++    // yt-fifo resolves the video with yt-dlp before answering, which can take several seconds.
++    private static final OkHttpClient CLIENT = new OkHttpClient.Builder()
++            .connectTimeout(5, TimeUnit.SECONDS)
++            .readTimeout(90, TimeUnit.SECONDS)
++            .build();
++
++    private YtFifoUtils() { }
++
++    /**
++     * @param context the context to use
++     * @return the configured server URL without a trailing slash, with {@code http://} prepended
++     *         when no scheme was typed, or {@code null} when the setting is empty
++     */
++    @Nullable
++    public static String getServerUrl(@NonNull final Context context) {
++        String url = PreferenceManager.getDefaultSharedPreferences(context)
++                .getString(context.getString(R.string.yt_fifo_url_key), "");
++        if (url == null) {
++            return null;
++        }
++        url = url.trim();
++        while (url.endsWith("/")) {
++            url = url.substring(0, url.length() - 1);
++        }
++        if (url.isEmpty()) {
++            return null;
++        }
++        if (!url.contains("://")) {
++            url = "http://" + url;
++        }
++        return url;
++    }
++
++    /**
++     * @param context the context to use
++     * @return whether the "home audio" entries should be offered, i.e. a server URL is set.
++     *         yt-fifo resolves streams with yt-dlp, which covers every service WizeStream has, so
++     *         there is no per-service check.
++     */
++    public static boolean shouldShowHomeAudio(@NonNull final Context context) {
++        return getServerUrl(context) != null;
++    }
++
++    /**
++     * Sends the stream url to the yt-fifo server, asynchronously, and reports the outcome in a
++     * toast: the resolved title on success, the server's error message otherwise.
++     *
++     * @param context   the context to use (only its application context is kept)
++     * @param streamUrl the url of the stream
++     * @param playNow   true to interrupt what is playing and play this stream right away,
++     *                  false to append it to the queue
++     */
++    public static void sendToHomeAudio(@NonNull final Context context,
++                                       @NonNull final String streamUrl,
++                                       final boolean playNow) {
++        final Context appContext = context.getApplicationContext();
++        final String server = getServerUrl(context);
++        if (server == null) {
++            return;
++        }
++        final JSONObject body = new JSONObject();
++        try {
++            body.put("url", streamUrl);
++            body.put("play_now", playNow);
++        } catch (final JSONException e) {
++            throw new IllegalStateException(e); // fixed keys and string values cannot fail
++        }
++        final Request request = new Request.Builder()
++                .url(server + "/queue")
++                .post(RequestBody.create(body.toString(), JSON))
++                .build();
++        CLIENT.newCall(request).enqueue(new Callback() {
++            @Override
++            public void onFailure(@NonNull final Call call, @NonNull final IOException e) {
++                Log.w(TAG, "Could not reach yt-fifo at " + server, e);
++                toast(appContext, appContext.getString(R.string.home_audio_failed,
++                        e.getLocalizedMessage()));
++            }
++
++            @Override
++            public void onResponse(@NonNull final Call call, @NonNull final Response response) {
++                try (response) {
++                    final String text = response.body().string();
++                    if (response.isSuccessful()) {
++                        final String title = firstTitle(text, streamUrl);
++                        toast(appContext, appContext.getString(playNow
++                                ? R.string.home_audio_playing : R.string.home_audio_queued,
++                                title));
++                    } else {
++                        toast(appContext, appContext.getString(R.string.home_audio_failed,
++                                errorMessage(text, response.code())));
++                    }
++                } catch (final IOException e) {
++                    toast(appContext, appContext.getString(R.string.home_audio_failed,
++                            e.getLocalizedMessage()));
++                }
++            }
++        });
++    }
++
++    /**
++     * @param json     a {@code POST /queue} response: {@code {"enqueued": [{"title": …}, …]}}
++     * @param fallback what to return when the title is missing
++     * @return the title of the first enqueued track
++     */
++    @NonNull
++    static String firstTitle(@NonNull final String json, @NonNull final String fallback) {
++        try {
++            final String title = new JSONObject(json).getJSONArray("enqueued")
++                    .getJSONObject(0).optString("title", "");
++            return title.isEmpty() ? fallback : title;
++        } catch (final JSONException e) {
++            return fallback;
++        }
++    }
++
++    /**
++     * @param json an error response: {@code {"error": "…"}}
++     * @param code the HTTP status, used when the body carries no message
++     * @return a message for the user
++     */
++    @NonNull
++    static String errorMessage(@NonNull final String json, final int code) {
++        try {
++            final String message = new JSONObject(json).optString("error", "");
++            return message.isEmpty() ? "HTTP " + code : message;
++        } catch (final JSONException e) {
++            return "HTTP " + code;
++        }
++    }
++
++    private static void toast(@NonNull final Context context, @NonNull final String message) {
++        MAIN.post(() -> Toast.makeText(context, message, Toast.LENGTH_LONG).show());
++    }
++}
+diff --git a/app/src/main/res/values/donottranslate.xml b/app/src/main/res/values/donottranslate.xml
+index 942a5524a..e24198337 100644
+--- a/app/src/main/res/values/donottranslate.xml
++++ b/app/src/main/res/values/donottranslate.xml
+@@ -4,6 +4,7 @@
+     <string name="vlc_package">org.videolan.vlc</string>
+     <string name="kore_package">org.xbmc.kore</string>
+     <string name="tubebeam_app_name">TubeBeam</string>
++    <string name="home_audio_name">Home audio</string>
+     <string name="tubebeam_package">dev.tubebeam</string>
+     <string name="tubebeam_send_activity">dev.tubebeam.share.ShareReceiverActivity</string>
+     <string name="tubebeam_queue_activity">dev.tubebeam.share.QueueShareActivity</string>
+diff --git a/app/src/main/res/values/settings_keys.xml b/app/src/main/res/values/settings_keys.xml
+index a7cc1824e..d5f25e126 100644
+--- a/app/src/main/res/values/settings_keys.xml
++++ b/app/src/main/res/values/settings_keys.xml
+@@ -459,6 +459,7 @@
+     </string-array>
+     <string name="playback_adjust_by_semitones_key">playback_adjust_by_semitones_key</string>
+     <string name="show_play_with_kodi_key">show_play_with_kodi</string>
++    <string name="yt_fifo_url_key">yt_fifo_url</string>
+     <string name="show_comments_key">show_comments</string>
+     <string name="show_next_video_key">show_next_video</string>
+     <string name="show_description_key">show_description</string>
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index 67398742e..a087a796e 100644
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -203,6 +203,13 @@
+     <string name="play_with_kodi_title">Play with Kodi</string>
+     <string name="send_to_tv_title">Send to TV</string>
+     <string name="queue_on_tv_title">Queue on TV</string>
++    <string name="play_on_home_audio_title">Play on home audio</string>
++    <string name="queue_on_home_audio_title">Queue on home audio</string>
++    <string name="home_audio_playing">Playing on home audio: %1$s</string>
++    <string name="home_audio_queued">Queued on home audio: %1$s</string>
++    <string name="home_audio_failed">Home audio: %1$s</string>
++    <string name="yt_fifo_url_title">Home audio server (yt-fifo)</string>
++    <string name="yt_fifo_url_summary">URL of your yt-fifo server, e.g. http://192.168.1.10:8888. When set, "Play on home audio" and "Queue on home audio" appear in the video menu and the Cast picker</string>
+     <string name="kore_not_found">Install missing Kore app\?</string>
+     <string name="show_play_with_kodi_title">Show \"Play with Kodi\" option</string>
+     <string name="show_play_with_kodi_summary">Display an option to play a video via Kodi media center</string>
+diff --git a/app/src/main/res/xml/video_audio_settings.xml b/app/src/main/res/xml/video_audio_settings.xml
+index 2feedf0e7..5e42398bf 100644
+--- a/app/src/main/res/xml/video_audio_settings.xml
++++ b/app/src/main/res/xml/video_audio_settings.xml
+@@ -217,6 +217,15 @@
+             app:singleLineTitle="false"
+             app:iconSpaceReserved="false" />
+ 
++        <EditTextPreference
++            android:defaultValue=""
++            android:inputType="textUri"
++            android:key="@string/yt_fifo_url_key"
++            android:summary="@string/yt_fifo_url_summary"
++            android:title="@string/yt_fifo_url_title"
++            app:singleLineTitle="false"
++            app:iconSpaceReserved="false" />
++
+         <ListPreference
+             android:layout_width="wrap_content"
+             android:layout_height="wrap_content"
+-- 
+2.56.0
+

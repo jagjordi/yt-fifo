@@ -1,0 +1,80 @@
+# "Home audio" remote: drop this card into a dashboard view (the remote-control
+# tab). Needs mini-media-player (HACS), media_player.home_audio_youtube,
+# input_text.youtube and the two scripts from scripts.yaml.
+type: vertical-stack
+cards:
+  - type: custom:mini-media-player
+    entity: media_player.home_audio_youtube
+    name: Home audio
+    icon: mdi:youtube
+    artwork: full-cover
+    hide:
+      power: true
+      source: true
+    info: short
+    shortcuts:
+      columns: 3
+      buttons:
+        - name: -30 s
+          icon: mdi:rewind-30
+          type: service
+          id: media_player.media_seek
+          data:
+            entity_id: media_player.home_audio_youtube
+            seek_position: >-
+              {{ [0, (state_attr('media_player.home_audio_youtube', 'media_position') | int(0)) - 30] | max }}
+        - name: Stop
+          icon: mdi:stop
+          type: service
+          id: media_player.media_stop
+          data:
+            entity_id: media_player.home_audio_youtube
+        - name: Clear queue
+          icon: mdi:playlist-remove
+          type: service
+          id: media_player.clear_playlist
+          data:
+            entity_id: media_player.home_audio_youtube
+  - type: entities
+    entities:
+      - entity: input_text.youtube
+        name: Video or playlist URL
+  - type: horizontal-stack
+    cards:
+      - type: button
+        entity: script.yt_fifo_play_now
+        name: Play now
+        icon: mdi:play-speed
+        show_state: false
+        tap_action:
+          action: perform-action
+          perform_action: script.yt_fifo_play_now
+      - type: button
+        entity: script.yt_fifo_queue
+        name: Queue
+        icon: mdi:playlist-plus
+        show_state: false
+        tap_action:
+          action: perform-action
+          perform_action: script.yt_fifo_queue
+      - type: button
+        entity: media_player.home_audio_youtube
+        name: Next
+        icon: mdi:skip-next
+        show_state: false
+        tap_action:
+          action: perform-action
+          perform_action: media_player.media_next_track
+          target:
+            entity_id: media_player.home_audio_youtube
+  - type: markdown
+    title: Queue
+    content: >-
+      {% set q = state_attr('media_player.home_audio_youtube', 'queue') or [] %}
+      {% if q | count == 0 %}
+      _Queue is empty_
+      {% else %}
+      {% for t in q %}
+      {{ loop.index }}. **{{ t.title }}**{% if t.uploader %} · {{ t.uploader }}{% endif %}{% if t.duration %} · {{ (t.duration / 60) | int }}:{{ '%02d' | format(t.duration | int % 60) }}{% endif %}
+      {% endfor %}
+      {% endif %}

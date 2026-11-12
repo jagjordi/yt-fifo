@@ -1,0 +1,4 @@
+/yt-fifo
+/dist/
+.env
+__pycache__/
