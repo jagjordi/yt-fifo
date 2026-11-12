@@ -158,6 +158,13 @@ and Docker add their own.
 - Resolved media URLs expire after a few hours; a track that waited in the
   queue for more than 30 minutes is resolved again just before it plays.
 
+## Chrome extension
+
+[`chrome/`](chrome/) is a Manifest V3 extension: right-click a YouTube link
+or watch page for **Play on home audio** / **Queue on home audio** (and
+**Queue whole playlist**), with the resolved title or the error in a
+notification. Load it unpacked and set the server URL in its options.
+
 ## WizeStream integration
 
 `wizestream/` holds a patch for [WizeStream](https://github.com/jagjordi/WizeStream) (NewPipe

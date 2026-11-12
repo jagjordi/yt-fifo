@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>yt-fifo options</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 16px; min-width: 360px; color-scheme: light dark; }
+  label { display: block; margin-bottom: 4px; font-weight: 600; }
+  input { width: 100%; box-sizing: border-box; padding: 6px 8px; font: inherit; }
+  .row { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+  button { padding: 6px 12px; font: inherit; }
+  #msg { font-size: 13px; color: #777; }
+  p { margin: 10px 0 0; font-size: 13px; color: #777; }
+</style>
+</head>
+<body>
+<label for="server">yt-fifo server URL</label>
+<input id="server" type="url" placeholder="http://192.168.1.181:8888">
+<div class="row">
+  <button id="save">Save</button>
+  <button id="test">Test</button>
+  <span id="msg"></span>
+</div>
+<p>Saving asks for permission to talk to that address. The context-menu entries appear on YouTube video and playlist links and on watch pages.</p>
+<script src="options.js"></script>
+</body>
+</html>
