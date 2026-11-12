@@ -48,6 +48,15 @@ type Config struct {
 	// "100 %" on the volume control amounts to. Use it to tame a source that
 	// is much louder than the others on the same snapserver. Zero means 1.
 	MaxVolume float64
+	// Dither is the peak amplitude, in LSB, of the triangular (TPDF) dither
+	// added after the volume scaling; 0 disables it. Besides the usual
+	// benefit of dither, it keeps the output from ever being a run of exact
+	// zeros: DACs such as the PCM5102A mute their analog output after ~20 ms
+	// of zero data and click when they unmute, which at low volumes happens
+	// at every pause in speech. If a client scales the samples down again
+	// (snapclient soft volume at 10 %, say), use an amplitude that survives
+	// that scaling, e.g. 16.
+	Dither int
 }
 
 // Errors returned by control methods.
@@ -533,12 +542,14 @@ func (p *Player) pump(r io.Reader) (int64, error) {
 	buf := make([]byte, 32*1024)
 	var total int64
 	carry := 0
+	rng := uint64(time.Now().UnixNano()) | 1
 	for {
 		n, err := r.Read(buf[carry:])
 		if n > 0 {
 			end := carry + n
 			whole := end &^ 1
 			applyGain(buf[:whole], p.Volume()*p.cfg.MaxVolume)
+			applyDither(buf[:whole], p.cfg.Dither, &rng)
 			if _, werr := p.cfg.Sink.Write(buf[:whole]); werr != nil {
 				return total, werr
 			}
@@ -556,6 +567,30 @@ func (p *Player) pump(r io.Reader) (int64, error) {
 			return total, err
 		}
 	}
+}
+
+// applyDither adds triangular dither of peak amplitude amp (LSB) to the s16le
+// samples in buf. rng is xorshift64 state, advanced in place.
+func applyDither(buf []byte, amp int, rng *uint64) {
+	if amp <= 0 {
+		return
+	}
+	n := uint64(amp) + 1
+	x := *rng
+	for i := 0; i+1 < len(buf); i += 2 {
+		x ^= x << 13
+		x ^= x >> 7
+		x ^= x << 17
+		d := int(x%n) + int((x>>32)%n) - amp
+		s := int(int16(binary.LittleEndian.Uint16(buf[i:]))) + d
+		if s > math.MaxInt16 {
+			s = math.MaxInt16
+		} else if s < math.MinInt16 {
+			s = math.MinInt16
+		}
+		binary.LittleEndian.PutUint16(buf[i:], uint16(int16(s)))
+	}
+	*rng = x
 }
 
 // applyGain scales the s16le samples in buf in place. buf must hold whole

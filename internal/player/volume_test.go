@@ -88,6 +88,55 @@ func TestMaxVolumeScalesWithoutChangingVolume(t *testing.T) {
 	}
 }
 
+func TestApplyDither(t *testing.T) {
+	rng := uint64(12345)
+	buf := samples(0, 0, 1000, -1000)
+	applyDither(buf, 0, &rng)
+	if want := samples(0, 0, 1000, -1000); !bytes.Equal(buf, want) {
+		t.Errorf("amp 0 must not touch the samples: got %v", buf)
+	}
+	for _, amp := range []int{1, 16} {
+		buf = make([]byte, 2*10000)
+		applyDither(buf, amp, &rng)
+		var sum, nonzero int
+		for i := 0; i < len(buf); i += 2 {
+			v := int(int16(binary.LittleEndian.Uint16(buf[i:])))
+			if v < -amp || v > amp {
+				t.Fatalf("amp %d: sample %d out of range", amp, v)
+			}
+			if v != 0 {
+				nonzero++
+			}
+			sum += v
+		}
+		if nonzero < 2000 {
+			t.Errorf("amp %d: only %d of 10000 samples non-zero", amp, nonzero)
+		}
+		if mean := float64(sum) / 10000; mean > 0.5 || mean < -0.5 {
+			t.Errorf("amp %d: mean %v, want ~0", amp, mean)
+		}
+	}
+	buf = samples(math.MaxInt16, math.MinInt16)
+	applyDither(buf, 16, &rng) // must clamp, not wrap
+	if v := int16(binary.LittleEndian.Uint16(buf)); v < math.MaxInt16-16 {
+		t.Errorf("max sample wrapped to %d", v)
+	}
+	if v := int16(binary.LittleEndian.Uint16(buf[2:])); v > math.MinInt16+16 {
+		t.Errorf("min sample wrapped to %d", v)
+	}
+}
+
+func TestPumpDithersAfterGain(t *testing.T) {
+	var out bytes.Buffer
+	p := New(Config{Rate: 48000, Channels: 2, Sink: &out, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Volume: 0.5, Dither: 1})
+	if _, err := p.pump(bytes.NewReader(make([]byte, 2*4000))); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(out.Bytes(), make([]byte, 2*4000)) {
+		t.Error("silence came out as exact zeros although dither is on")
+	}
+}
+
 func TestVolumeClampAndStatus(t *testing.T) {
 	p := New(Config{Rate: 48000, Channels: 2, Sink: io.Discard, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if v := p.Status().Volume; v != 1 {
